@@ -73,7 +73,7 @@ def run_policy(net, env, device='cpu', mean_inputs=None, std_inputs=None):
         if done:
             success += info['success']
             obs, _ = env.reset()
-            print("Episode {} return: {}".format(ep, ret))
+            # print("Episode {} return: {}".format(ep, ret))
             returns.append(ret)
             ret = 0
             ep += 1
@@ -92,8 +92,21 @@ def run_policy(net, env, device='cpu', mean_inputs=None, std_inputs=None):
     return np.mean(returns), np.std(returns), success_rate, frames
 
 
-def train(net, trainloader, valloader, optimizer, criterion, env=None, device='cpu', logger=None, mean_inputs=None, std_inputs=None, use_stochastic_policy=False, run_name=None):
+def train(net, 
+          trainloader, 
+          valloader, 
+          optimizer, 
+          criterion,
+          env=None, 
+          device='cpu', 
+          logger=None, 
+          mean_inputs=None, 
+          std_inputs=None, 
+          use_stochastic_policy=False, 
+          run_name=None,
+          save_model=False):
 
+    max_success_rate = -np.inf
     for epoch in range(FLAGS.nepochs):  # loop over the dataset multiple times
 
         running_loss = 0.0
@@ -145,21 +158,22 @@ def train(net, trainloader, valloader, optimizer, criterion, env=None, device='c
                 val_loss += loss.item()
         
         avg_val_loss = val_loss / len(valloader)
-        print(f'Epoch {epoch + 1} validation loss: {avg_val_loss:.3f}')
+        # print(f'Epoch {epoch + 1} validation loss: {avg_val_loss:.3f}')
 
         if logger is not None:
             logger.log({'loss': avg_loss, 'val_loss': avg_val_loss}, step=epoch)
 
         if epoch % 20 == 0:   
             mean, std, success_rate, frames = run_policy(net, env, device=device, mean_inputs=mean_inputs, std_inputs=std_inputs)
-
+            if success_rate > max_success_rate:
+                max_success_rate = success_rate
             if logger is not None:
-                logger.log({'mean_return': mean, 'std_return': std, 'success_rate': success_rate}, step=epoch)
-                logger.log({
-                    'video/video': wandb.Video(frames, fps=30, format='mp4')
-                }, step=epoch)
+                logger.log({'mean_return': mean, 'std_return': std, 'success_rate': success_rate, 'max_success_rate': max_success_rate}, step=epoch)
+                # logger.log({
+                #     'video/video': wandb.Video(frames, fps=30, format='mp4')
+                # }, step=epoch)
             
-            if run_name:
+            if save_model:
                 if not os.path.exists('checkpoints'):
                     os.makedirs('checkpoints')
                 torch.save({
@@ -177,7 +191,8 @@ def main(_):
     np.random.seed(FLAGS.seed)
     random.seed(FLAGS.seed)
     
-    run_name = f"env_{FLAGS.env}_model_{FLAGS.network_type}_seed_{FLAGS.seed}_nheads_{FLAGS.nheads}_embedding_dim_{FLAGS.embedding_dim}_dim_feedforward_{FLAGS.dim_feedforward}_nlayers_{FLAGS.nlayers}"
+    # run_name = f"env_{FLAGS.env}_model_{FLAGS.network_type}_seed_{FLAGS.seed}_nheads_{FLAGS.nheads}_embedding_dim_{FLAGS.embedding_dim}_dim_feedforward_{FLAGS.dim_feedforward}_nlayers_{FLAGS.nlayers}"
+    run_name = f"env_{FLAGS.env}_model_{FLAGS.network_type}_seed_{FLAGS.seed}_ndemos_{FLAGS.ndemos}"
     # Sanitize run_name for filesystem compatibility
     run_name = run_name.replace('/', '_')
     wandb.init(entity=FLAGS.entity, project='adroit-eval', name=run_name, config=FLAGS)
@@ -199,7 +214,7 @@ def main(_):
     np.random.default_rng(42)
     
     # Calculate validation size, 10% of training demos
-    val_size = max(1, int(0.1 * N))
+    val_size = 50 # max(1, int(0.1 * N))
 
     # Check if we have enough data
     if N + val_size > dataset.total_episodes:
