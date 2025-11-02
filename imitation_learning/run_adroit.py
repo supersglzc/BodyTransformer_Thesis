@@ -34,7 +34,7 @@ flags.DEFINE_string('use_positional_encoding', 'False', 'Whether to use position
 flags.DEFINE_string('is_mixed', "False", 'Whether to interleave masked and unmasked attention layers')
 flags.DEFINE_integer('first_hard_layer', 0, 'Index of the first masked layer for the bot-mix')
 flags.DEFINE_string('use_stochastic_policy', 'False', 'Whether to use a stochastic policy')
-
+flags.DEFINE_boolean('save_model', False, 'Whether to save the model')
 
 def run_policy(net, env, device='cpu', mean_inputs=None, std_inputs=None):
     net.eval()
@@ -307,7 +307,7 @@ def main(_):
     optimizer = torch.optim.AdamW(model.parameters(), lr=FLAGS.lr)
     criterion = torch.nn.MSELoss()
     
-    train(model, train_dataloader, valloader, optimizer, criterion, env=env, device=device, logger=wandb, mean_inputs=mean_inputs, std_inputs=std_inputs, run_name=run_name)
+    train(model, train_dataloader, valloader, optimizer, criterion, env=env, device=device, logger=wandb, mean_inputs=mean_inputs, std_inputs=std_inputs, run_name=run_name, save_model=FLAGS.save_model)
 
     print("Done")
 

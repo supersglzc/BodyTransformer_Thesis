@@ -1,0 +1,36 @@
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args_no_hyphens}
+method: grid
+metric:
+  goal: maximize
+  name: reward
+parameters:
+  --seed:
+    values:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+  --env:
+    values:
+      - D4RL/hammer/expert-v2
+      - D4RL/relocate/expert-v2
+      - D4RL/door/expert-v2
+  --network_type:
+    values:
+      - graph
+  --ndemos:
+    values:
+      - 50
+      - 10
+      - 5
+      - 3
+      - 1
+  --nepochs:
+    values:
+      - 1000
+program: run_adroit.py
