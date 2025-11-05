@@ -73,7 +73,7 @@ def run_policy(net, env, device='cpu', mean_inputs=None, std_inputs=None):
         if done:
             success += info['success']
             obs, _ = env.reset()
-            print("Episode {} return: {}".format(ep, ret))
+            # print("Episode {} return: {}".format(ep, ret))
             returns.append(ret)
             ret = 0
             ep += 1
@@ -94,6 +94,7 @@ def run_policy(net, env, device='cpu', mean_inputs=None, std_inputs=None):
 
 def train(net, trainloader, optimizer, criterion, env=None, device='cpu', logger=None, mean_inputs=None, std_inputs=None, use_stochastic_policy=False):
 
+    max_success_rate = -np.inf
     for epoch in range(FLAGS.nepochs):  # loop over the dataset multiple times
 
         running_loss = 0.0
@@ -129,13 +130,15 @@ def train(net, trainloader, optimizer, criterion, env=None, device='cpu', logger
         
         if logger is not None:
             logger.log({'loss': avg_loss}, step=epoch)
-            
-        mean, std, success_rate, frames = run_policy(net, env, device=device, mean_inputs=mean_inputs, std_inputs=std_inputs)
-        if logger is not None:
-            logger.log({'mean_return': mean, 'std_return': std, 'success_rate': success_rate}, step=epoch)
-            logger.log({
-                'video/video': wandb.Video(frames, fps=30, format='mp4')
-            }, step=epoch)
+        if epoch % 20 == 0:   
+            mean, std, success_rate, frames = run_policy(net, env, device=device, mean_inputs=mean_inputs, std_inputs=std_inputs)
+            if success_rate > max_success_rate:
+                max_success_rate = success_rate
+            if logger is not None:
+                logger.log({'mean_return': mean, 'std_return': std, 'success_rate': success_rate, 'max_success_rate': max_success_rate}, step=epoch)
+                # logger.log({
+                #     'video/video': wandb.Video(frames, fps=30, format='mp4')
+                # }, step=epoch)
         
 
 
@@ -145,12 +148,21 @@ def main(_):
     np.random.seed(FLAGS.seed)
     random.seed(FLAGS.seed)
     
-    run_name = f"{FLAGS.env}_bc_seed_{FLAGS.seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # run_name = f"{FLAGS.env}_bc_seed_{FLAGS.seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    run_name = f"env_{FLAGS.env}_model_{FLAGS.network_type}_seed_{FLAGS.seed}_ndemos_{FLAGS.ndemos}"
+    # Sanitize run_name for filesystem compatibility
+    run_name = run_name.replace('/', '_')
     wandb.init(entity=FLAGS.entity, project='adroit-bc', name=run_name, config=FLAGS)
       
     dataset = minari.load_dataset(FLAGS.env, download=True)
     env = dataset.recover_environment()
 
+    if 'hammer' in FLAGS.env:
+        FLAGS.env = 'hammer-expert-v2'
+    elif 'relocate' in FLAGS.env:
+        FLAGS.env = 'relocate-expert-v2'
+    elif 'door' in FLAGS.env:
+        FLAGS.env = 'door-expert-v2'
     N = FLAGS.ndemos
     sample = dataset.sample_episodes(n_episodes=1)
     T = sample[0].observations.shape[0] - 1
