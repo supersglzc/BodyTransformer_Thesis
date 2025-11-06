@@ -142,22 +142,25 @@ def train(net,
 
         
         # Validation loss
-        val_loss = 0.0
-        net.eval()
-        with torch.no_grad():
-            for i, data in enumerate(valloader, 0):
-                inputs, labels = data
-                inputs = inputs.to(device)
-                labels = labels.to(device)
-                inputs = inputs.reshape(-1, inputs.shape[1:].numel())
-                if not use_stochastic_policy:
-                    outputs = net.mode(inputs)
-                    loss = criterion(outputs, labels)
-                else:
-                    loss = -net.log_prob(inputs, labels).mean()
-                val_loss += loss.item()
-        
-        avg_val_loss = val_loss / len(valloader)
+        if valloader is not None:
+            val_loss = 0.0
+            net.eval()
+            with torch.no_grad():
+                for i, data in enumerate(valloader, 0):
+                    inputs, labels = data
+                    inputs = inputs.to(device)
+                    labels = labels.to(device)
+                    inputs = inputs.reshape(-1, inputs.shape[1:].numel())
+                    if not use_stochastic_policy:
+                        outputs = net.mode(inputs)
+                        loss = criterion(outputs, labels)
+                    else:
+                        loss = -net.log_prob(inputs, labels).mean()
+                    val_loss += loss.item()
+            
+            avg_val_loss = val_loss / len(valloader)
+        else:
+            avg_val_loss = 0.0
         # print(f'Epoch {epoch + 1} validation loss: {avg_val_loss:.3f}')
 
         if logger is not None:
@@ -190,6 +193,7 @@ def main(_):
     torch.manual_seed(FLAGS.seed)
     np.random.seed(FLAGS.seed)
     random.seed(FLAGS.seed)
+    human = "human" in FLAGS.env
     
     # run_name = f"env_{FLAGS.env}_model_{FLAGS.network_type}_seed_{FLAGS.seed}_nheads_{FLAGS.nheads}_embedding_dim_{FLAGS.embedding_dim}_dim_feedforward_{FLAGS.dim_feedforward}_nlayers_{FLAGS.nlayers}"
     run_name = f"env_{FLAGS.env}_model_{FLAGS.network_type}_seed_{FLAGS.seed}_ndemos_{FLAGS.ndemos}"
@@ -199,6 +203,15 @@ def main(_):
       
     dataset = minari.load_dataset(FLAGS.env, download=True)
     env = dataset.recover_environment()
+
+    if "hammer" in FLAGS.env:
+        FLAGS.env = "D4RL/hammer/expert-v2"
+    elif "door" in FLAGS.env:
+        FLAGS.env = "D4RL/door/expert-v2"
+    elif "relocate" in FLAGS.env:
+        FLAGS.env = "D4RL/relocate/expert-v2"
+    else:
+        raise ValueError(f"Invalid environment: {FLAGS.env}")
 
     N = FLAGS.ndemos
     sample = dataset.sample_episodes(n_episodes=1)
@@ -214,7 +227,7 @@ def main(_):
     np.random.default_rng(42)
     
     # Calculate validation size, 10% of training demos
-    val_size = 50 # max(1, int(0.1 * N))
+    val_size = 0 if human else 50 # max(1, int(0.1 * N))
 
     # Check if we have enough data
     if N + val_size > dataset.total_episodes:
@@ -228,33 +241,40 @@ def main(_):
     N_train = len(train_episodes)
     N_val = len(val_episodes)
 
-    train_inputs = torch.zeros((N_train, T, obs_dim))
-    train_targets = torch.zeros((N_train, T, action_dim))
-    for i, episode in enumerate(train_episodes):
-        train_inputs[i] = torch.from_numpy(episode.observations[:-1])
-        train_targets[i] = torch.from_numpy(episode.actions)
+    if human:
+        train_inputs = []
+        train_targets = []
+        for episode in train_episodes:
+            train_inputs.append(torch.from_numpy(episode.observations[:-1]))
+            train_targets.append(torch.from_numpy(episode.actions))
+        train_inputs = torch.concat(train_inputs, dim=0)
+        train_targets = torch.concat(train_targets, dim=0)
+        train_inputs = train_inputs.float()
+        train_targets = train_targets.float()
+    else:
+        train_inputs = torch.zeros((N_train, T, obs_dim))
+        train_targets = torch.zeros((N_train, T, action_dim))
+        for i, episode in enumerate(train_episodes):
+            train_inputs[i] = torch.from_numpy(episode.observations[:-1])
+            train_targets[i] = torch.from_numpy(episode.actions)
 
-    val_inputs = torch.zeros((N_val, T, obs_dim))
-    val_targets = torch.zeros((N_val, T, action_dim))
-    for i, episode in enumerate(val_episodes):
-        val_inputs[i] = torch.from_numpy(episode.observations[:-1])
-        val_targets[i] = torch.from_numpy(episode.actions)
+        val_inputs = torch.zeros((N_val, T, obs_dim))
+        val_targets = torch.zeros((N_val, T, action_dim))
+        for i, episode in enumerate(val_episodes):
+            val_inputs[i] = torch.from_numpy(episode.observations[:-1])
+            val_targets[i] = torch.from_numpy(episode.actions)
 
-    train_inputs = train_inputs.reshape(N_train * T, obs_dim)
-    train_targets = train_targets.reshape(N_train * T, action_dim)
-    val_inputs = val_inputs.reshape(N_val * T, obs_dim)
-    val_targets = val_targets.reshape(N_val * T, action_dim)
-
+        train_inputs = train_inputs.reshape(N_train * T, obs_dim)
+        train_targets = train_targets.reshape(N_train * T, action_dim)
+        val_inputs = val_inputs.reshape(N_val * T, obs_dim)
+        val_targets = val_targets.reshape(N_val * T, action_dim)
+    print(train_inputs.dtype)
     # normalize inputs based on training data
     mean_inputs = train_inputs.mean(dim=0)
     std_inputs = train_inputs.std(dim=0)
     
     train_inputs = (train_inputs - mean_inputs) / (std_inputs + 1e-8)
-    val_inputs = (val_inputs - mean_inputs) / (std_inputs + 1e-8)
-
     train_dataset = torch.utils.data.TensorDataset(train_inputs, train_targets)
-    val_dataset = torch.utils.data.TensorDataset(val_inputs, val_targets)
-
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=FLAGS.batch_size,
@@ -263,15 +283,17 @@ def main(_):
         pin_memory=True,  # Use pin_memory for faster data transfer to GPU
         persistent_workers= True  # Keep workers alive for faster data loading
     )
-
-    valloader = torch.utils.data.DataLoader(
-        val_dataset,
-        batch_size=FLAGS.batch_size,
-        shuffle=False,
-        num_workers=16,
-        pin_memory=True,
-        persistent_workers=True
-    )
+    if not human:
+        val_inputs = (val_inputs - mean_inputs) / (std_inputs + 1e-8)
+        val_dataset = torch.utils.data.TensorDataset(val_inputs, val_targets)
+        valloader = torch.utils.data.DataLoader(
+            val_dataset,
+            batch_size=FLAGS.batch_size,
+            shuffle=False,
+            num_workers=16,
+            pin_memory=True,
+            persistent_workers=True
+        )
 
     device = 'cuda'
     
@@ -307,7 +329,7 @@ def main(_):
     optimizer = torch.optim.AdamW(model.parameters(), lr=FLAGS.lr)
     criterion = torch.nn.MSELoss()
     
-    train(model, train_dataloader, valloader, optimizer, criterion, env=env, device=device, logger=wandb, mean_inputs=mean_inputs, std_inputs=std_inputs, run_name=run_name, save_model=FLAGS.save_model)
+    train(model, train_dataloader, valloader if not human else None, optimizer, criterion, env=env, device=device, logger=wandb, mean_inputs=mean_inputs, std_inputs=std_inputs, run_name=run_name, save_model=FLAGS.save_model)
 
     print("Done")
 
