@@ -147,6 +147,8 @@ def main(_):
     torch.manual_seed(FLAGS.seed)
     np.random.seed(FLAGS.seed)
     random.seed(FLAGS.seed)
+
+    human = "human" in FLAGS.env
     
     # run_name = f"{FLAGS.env}_bc_seed_{FLAGS.seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     run_name = f"env_{FLAGS.env}_model_{FLAGS.network_type}_seed_{FLAGS.seed}_ndemos_{FLAGS.ndemos}"
@@ -163,6 +165,9 @@ def main(_):
         FLAGS.env = 'relocate-expert-v2'
     elif 'door' in FLAGS.env:
         FLAGS.env = 'door-expert-v2'
+    else:
+        raise ValueError(f"Invalid environment: {FLAGS.env}")
+
     N = FLAGS.ndemos
     sample = dataset.sample_episodes(n_episodes=1)
     T = sample[0].observations.shape[0] - 1
@@ -174,19 +179,31 @@ def main(_):
     action_dim = sample[0].actions.shape[-1]
     print("action_dim", action_dim)
 
-    inputs = torch.zeros((N, T, obs_dim))
-    targets = torch.zeros((N, T, action_dim))
-
     dataset.set_seed(FLAGS.seed)
     episodes = dataset.sample_episodes(n_episodes=N)
-    for i, episode in enumerate(episodes):
-        inputs[i] = torch.from_numpy(episode.observations[:-1])
-        targets[i] = torch.from_numpy(episode.actions)
 
-    print("inputs", inputs.shape)
+    if human:
+        inputs = []
+        targets = []
+        for episode in episodes:
+            inputs.append(torch.from_numpy(episode.observations[:-1]))
+            targets.append(torch.from_numpy(episode.actions))
+        inputs = torch.concat(inputs, dim=0)
+        targets = torch.concat(targets, dim=0)
+        new_inputs = inputs.float()
+        targets = targets.float()
+    else:
+        inputs = torch.zeros((N, T, obs_dim))
+        targets = torch.zeros((N, T, action_dim))
 
-    new_inputs = inputs.reshape(N * T, obs_dim)  # [N * T, obs_dim]
-    targets = targets.reshape(N * T, action_dim)  # [N * T, action_dim]
+        for i, episode in enumerate(episodes):
+            inputs[i] = torch.from_numpy(episode.observations[:-1])
+            targets[i] = torch.from_numpy(episode.actions)
+
+        print("inputs", inputs.shape)
+
+        new_inputs = inputs.reshape(N * T, obs_dim)  # [N * T, obs_dim]
+        targets = targets.reshape(N * T, action_dim)  # [N * T, action_dim]
 
     # normalize inputs
     mean_inputs = new_inputs.mean(dim=0)
